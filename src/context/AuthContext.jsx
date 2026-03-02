@@ -3,7 +3,7 @@ import axios from 'axios';
 
 const AuthContext = createContext(null);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'https://college2career-4qop.onrender.com/api';
 
 // Configure axios defaults
 axios.defaults.baseURL = API_URL;
