@@ -1,6 +1,133 @@
 const Submission = require('../models/Submission');
 const Assessment = require('../models/Assessment');
 
+// @desc    Start the test for a student (set their timer start)
+// @route   POST /api/submissions/:assessmentId/start
+const startSubmitTest = async (req, res) => {
+    try {
+        const { assessmentId } = req.params;
+
+        const assessment = await Assessment.findById(assessmentId);
+        if (!assessment) {
+            return res.status(404).json({ message: 'Assessment not found' });
+        }
+        if (assessment.status !== 'active') {
+            return res.status(400).json({ message: 'Assessment is not currently active' });
+        }
+
+        // Check if student already started
+        let submission = await Submission.findOne({
+            studentId: req.user._id,
+            assessmentId,
+        });
+
+        if (submission && submission.studentStartedAt) {
+            // Already started, just return current submission
+            return res.json({
+                message: 'You already started this test',
+                submission,
+            });
+        }
+
+        // Create or update submission with student start time
+        submission = await Submission.findOneAndUpdate(
+            { studentId: req.user._id, assessmentId },
+            {
+                $set: {
+                    studentStartedAt: new Date(),
+                    totalQuestions: assessment.questions.length,
+                },
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+
+        res.json({
+            message: 'Test started. You have ' + assessment.duration + ' minutes',
+            submission,
+            duration: assessment.duration,
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Get remaining time for a student's test
+// @route   GET /api/submissions/:assessmentId/time-remaining
+const getTimeRemaining = async (req, res) => {
+    try {
+        const { assessmentId } = req.params;
+
+        const assessment = await Assessment.findById(assessmentId);
+        if (!assessment) {
+            return res.status(404).json({ message: 'Assessment not found' });
+        }
+
+        const submission = await Submission.findOne({
+            studentId: req.user._id,
+            assessmentId,
+        });
+
+        if (!submission || !submission.studentStartedAt) {
+            return res.status(400).json({
+                message: 'Test not started yet',
+                timeRemaining: 0,
+            });
+        }
+
+        // Calculate time remaining
+        const startTime = new Date(submission.studentStartedAt);
+        const endTime = new Date(startTime.getTime() + assessment.duration * 60 * 1000);
+        const now = new Date();
+        const timeRemaining = Math.max(0, Math.floor((endTime - now) / 1000)); // in seconds
+
+        // Check if time expired
+        if (timeRemaining === 0 && !submission.submittedAt) {
+            // Auto-submit if time expired
+            submission.submittedAt = new Date();
+            submission.isTimeExpired = true;
+            await submission.save();
+            
+            return res.json({
+                timeRemaining: 0,
+                isExpired: true,
+                message: 'Time is up! Test auto-submitted.',
+                submission,
+            });
+        }
+
+        res.json({
+            timeRemaining,
+            isExpired: timeRemaining === 0,
+            duration: assessment.duration,
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// @desc    Check if student can submit (validate time)
+const validateTimeBeforeSubmit = async (studentId, assessmentId) => {
+    const assessment = await Assessment.findById(assessmentId);
+    const submission = await Submission.findOne({
+        studentId,
+        assessmentId,
+    });
+
+    if (!submission || !submission.studentStartedAt) {
+        throw new Error('Test not started');
+    }
+
+    const startTime = new Date(submission.studentStartedAt);
+    const endTime = new Date(startTime.getTime() + assessment.duration * 60 * 1000);
+    const now = new Date();
+
+    if (now > endTime) {
+        return { isExpired: true, timeOver: true };
+    }
+
+    return { isExpired: false };
+};
+
 // @desc    Submit or update answers (upsert)
 // @route   POST /api/submissions
 const submitAnswers = async (req, res) => {
@@ -13,6 +140,15 @@ const submitAnswers = async (req, res) => {
         }
         if (assessment.status !== 'active') {
             return res.status(400).json({ message: 'Assessment is not currently active' });
+        }
+
+        // Validate time
+        const timeCheck = await validateTimeBeforeSubmit(req.user._id, assessmentId);
+        if (timeCheck.isExpired) {
+            return res.status(400).json({
+                message: 'Time is up! You cannot submit answers.',
+                isTimeExpired: true,
+            });
         }
 
         // Upsert: update if exists, create if not
@@ -40,6 +176,24 @@ const submitAnswers = async (req, res) => {
 const autoSaveAnswers = async (req, res) => {
     try {
         const { assessmentId, answers } = req.body;
+
+        const assessment = await Assessment.findById(assessmentId);
+        if (!assessment) {
+            return res.status(404).json({ message: 'Assessment not found' });
+        }
+
+        // Check if time expired (don't allow autosave if time is up)
+        try {
+            const timeCheck = await validateTimeBeforeSubmit(req.user._id, assessmentId);
+            if (timeCheck.isExpired) {
+                return res.status(400).json({
+                    message: 'Time is up! Cannot save answers.',
+                    isTimeExpired: true,
+                });
+            }
+        } catch (error) {
+            // If test not started, allow autosave anyway
+        }
 
         const submission = await Submission.findOneAndUpdate(
             { studentId: req.user._id, assessmentId },
@@ -105,6 +259,8 @@ const getSubmissionDetail = async (req, res) => {
 };
 
 module.exports = {
+    startSubmitTest,
+    getTimeRemaining,
     submitAnswers,
     autoSaveAnswers,
     getMySubmissions,

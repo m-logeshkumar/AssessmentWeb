@@ -35,9 +35,17 @@ const submissionSchema = new mongoose.Schema({
         type: Number,
         default: 0,
     },
+    studentStartedAt: {
+        type: Date,
+        default: null, // When the student starts taking the test
+    },
     submittedAt: {
         type: Date,
         default: null,
+    },
+    isTimeExpired: {
+        type: Boolean,
+        default: false, // true if auto-submitted due to time expiry
     },
     autoSaved: {
         type: Boolean,

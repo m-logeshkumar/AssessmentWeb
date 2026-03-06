@@ -28,12 +28,13 @@ const TakeTest = () => {
                 }
                 setAssessment(data);
 
-                // Calculate remaining time
-                if (data.startedAt) {
-                    const startTime = new Date(data.startedAt).getTime();
-                    const endTime = startTime + data.duration * 60 * 1000;
-                    const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
-                    setTimeLeft(remaining);
+                // Start the test for this student (set their timer)
+                try {
+                    await axios.post(`/submissions/${id}/start`);
+                } catch (err) {
+                    if (err.response?.status !== 400) {
+                        console.error('Failed to start test:', err);
+                    }
                 }
 
                 // Load any existing auto-saved answers
@@ -61,23 +62,31 @@ const TakeTest = () => {
         };
     }, [id, navigate]);
 
-    // Countdown timer
+    // Fetch remaining time and update timer every second
     useEffect(() => {
-        if (timeLeft === null || timeLeft <= 0) return;
+        if (!assessment) return;
 
-        timerRef.current = setInterval(() => {
-            setTimeLeft(prev => {
-                if (prev <= 1) {
+        const fetchTimeRemaining = async () => {
+            try {
+                const { data } = await axios.get(`/submissions/${id}/time-remaining`);
+                const remaining = data.timeRemaining || 0;
+                setTimeLeft(remaining);
+
+                if (data.isExpired && !submitting) {
                     clearInterval(timerRef.current);
                     handleAutoSubmit();
-                    return 0;
                 }
-                return prev - 1;
-            });
-        }, 1000);
+            } catch (err) {
+                // Assessment might not be started yet or has ended
+                console.error('Error fetching time:', err);
+            }
+        };
+
+        fetchTimeRemaining(); // Fetch immediately
+        timerRef.current = setInterval(fetchTimeRemaining, 1000); // Then every second
 
         return () => clearInterval(timerRef.current);
-    }, [timeLeft]);
+    }, [assessment, id, submitting]);
 
     // Auto-save every 30 seconds
     useEffect(() => {
