@@ -28,4 +28,4 @@ services:
     publishDirectory: dist
     envVars:
       - key: VITE_API_URL
-        value: https://college2career-4qop.onrender.com/api
+        value: http://localhost:5000/api
