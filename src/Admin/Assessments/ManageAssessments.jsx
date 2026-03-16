@@ -23,6 +23,11 @@ const ManageAssessments = () => {
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [assessmentToDelete, setAssessmentToDelete] = useState(null);
     const [deleting, setDeleting] = useState(false);
+    const [showSubmissionsModal, setShowSubmissionsModal] = useState(false);
+    const [selectedAssessmentForSubmissions, setSelectedAssessmentForSubmissions] = useState(null);
+    const [submissions, setSubmissions] = useState([]);
+    const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+    const [allSubmissions, setAllSubmissions] = useState([]);
     const navigate = useNavigate();
 
     const fetchAssessments = async () => {
@@ -36,7 +41,29 @@ const ManageAssessments = () => {
 
     useEffect(() => {
         fetchAssessments();
+        fetchAllSubmissions();
     }, []);
+
+    const fetchAllSubmissions = async () => {
+        try {
+            // Fetch submissions for all active assessments
+            const assessmentResponse = await axios.get('/assessments');
+            const activeAssessments = assessmentResponse.data.filter(a => a.status === 'active' || a.status === 'completed');
+            
+            let allSubs = [];
+            for (const assessment of activeAssessments) {
+                try {
+                    const { data } = await axios.get(`/submissions/assessment/${assessment._id}`);
+                    allSubs = [...allSubs, ...data];
+                } catch (err) {
+                    // Skip if error fetching for this assessment
+                }
+            }
+            setAllSubmissions(allSubs);
+        } catch (err) {
+            console.log('Could not fetch submissions');
+        }
+    };
 
     const addQuestion = () => {
         setQuestions([...questions, { questionText: '' }]);
@@ -93,6 +120,20 @@ const ManageAssessments = () => {
     const confirmDelete = (assessment) => {
         setAssessmentToDelete(assessment);
         setShowDeleteModal(true);
+    };
+
+    const handleViewSubmissions = async (assessment) => {
+        setSelectedAssessmentForSubmissions(assessment);
+        setLoadingSubmissions(true);
+        try {
+            const { data } = await axios.get(`/submissions/assessment/${assessment._id}`);
+            setSubmissions(data);
+            setShowSubmissionsModal(true);
+        } catch (err) {
+            toast.error('Failed to load submissions');
+        } finally {
+            setLoadingSubmissions(false);
+        }
     };
 
     const handleDelete = async () => {
@@ -202,12 +243,21 @@ const ManageAssessments = () => {
                                                         </button>
                                                     )}
                                                     {a.status === 'active' && (
-                                                        <button
-                                                            className="btn btn-danger btn-sm"
-                                                            onClick={() => handleStop(a._id)}
-                                                        >
-                                                            <HiOutlineStop /> Stop
-                                                        </button>
+                                                        <div className="flex gap-8 align-center">
+                                                            <button
+                                                                className="btn btn-danger btn-sm"
+                                                                onClick={() => handleStop(a._id)}
+                                                            >
+                                                                <HiOutlineStop /> Stop
+                                                            </button>
+                                                            <button
+                                                                className="btn btn-info btn-sm"
+                                                                onClick={() => handleViewSubmissions(a)}
+                                                                style={{ cursor: 'pointer' }}
+                                                            >
+                                                                {allSubmissions.filter(s => s.assessmentId === a._id && s.submittedAt).length}/{allSubmissions.filter(s => s.assessmentId === a._id).length || 0}
+                                                            </button>
+                                                        </div>
                                                     )}
                                                     {a.status === 'completed' && (
                                                         <button
@@ -282,6 +332,84 @@ const ManageAssessments = () => {
                                         style={{ flex: 1 }}
                                     >
                                         {deleting ? 'Deleting...' : 'Delete Assessment'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Submissions Status Modal */}
+                    {showSubmissionsModal && selectedAssessmentForSubmissions && (
+                        <div className="modal-overlay" onClick={() => !loadingSubmissions && setShowSubmissionsModal(false)}>
+                            <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxHeight: '80vh', overflowY: 'auto' }}>
+                                <div className="modal-header">
+                                    <h3 className="modal-title">Submission Status - {selectedAssessmentForSubmissions?.title}</h3>
+                                    <button 
+                                        className="modal-close" 
+                                        onClick={() => setShowSubmissionsModal(false)}
+                                        disabled={loadingSubmissions}
+                                    >×</button>
+                                </div>
+                                <div style={{ marginBottom: 24 }}>
+                                    {loadingSubmissions ? (
+                                        <div style={{ textAlign: 'center', padding: '20px' }}>Loading submissions...</div>
+                                    ) : submissions.length === 0 ? (
+                                        <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                                            No submissions yet
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'grid', gap: '12px' }}>
+                                            {submissions
+                                                .filter(s => s.assessmentId === selectedAssessmentForSubmissions._id)
+                                                .map((submission, idx) => (
+                                                <div 
+                                                    key={submission._id} 
+                                                    style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'space-between',
+                                                        padding: '12px 16px',
+                                                        backgroundColor: submission.submittedAt ? 'var(--success-bg)' : 'var(--warning-bg)',
+                                                        borderRadius: '6px',
+                                                        borderLeft: `4px solid ${submission.submittedAt ? 'var(--success)' : 'var(--warning)'}`
+                                                    }}
+                                                >
+                                                    <div>
+                                                        <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
+                                                            {submission.studentId?.name || `Student ${idx + 1}`}
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                                            {submission.submittedAt 
+                                                                ? `Submitted at ${new Date(submission.submittedAt).toLocaleString()}`
+                                                                : 'Not submitted'
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                    <div style={{
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        width: '32px',
+                                                        height: '32px',
+                                                        borderRadius: '50%',
+                                                        backgroundColor: submission.submittedAt ? 'var(--success)' : 'var(--danger)',
+                                                        color: 'white',
+                                                        fontWeight: 'bold'
+                                                    }}>
+                                                        {submission.submittedAt ? '✓' : '✗'}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex gap-12">
+                                    <button 
+                                        className="btn btn-primary" 
+                                        onClick={() => setShowSubmissionsModal(false)}
+                                        style={{ flex: 1 }}
+                                    >
+                                        Close
                                     </button>
                                 </div>
                             </div>
