@@ -1,61 +1,23 @@
-const Submission = require('../models/Submission');
-const Assessment = require('../models/Assessment');
-
-// In-memory store for active assessment timers
-const activeTimers = new Map();
-
 /**
- * Start a timer for an assessment. When the timer expires,
- * all in-progress submissions are auto-saved.
+ * Assessment-level timers are intentionally disabled.
+ * Admin controls when to stop the assessment manually.
  */
 const startAssessmentTimer = (assessmentId, durationMinutes) => {
-    // Clear any existing timer for this assessment
-    if (activeTimers.has(assessmentId.toString())) {
-        clearTimeout(activeTimers.get(assessmentId.toString()));
-    }
-
-    const durationMs = durationMinutes * 60 * 1000;
-
-    const timerId = setTimeout(async () => {
-        try {
-            console.log(`⏰ Timer expired for assessment ${assessmentId}. Auto-saving submissions...`);
-
-            // Mark assessment as completed
-            await Assessment.findByIdAndUpdate(assessmentId, { status: 'completed' });
-
-            // Auto-save all submissions that haven't been formally submitted
-            await Submission.updateMany(
-                { assessmentId, submittedAt: null },
-                { $set: { autoSaved: true, submittedAt: new Date() } }
-            );
-
-            activeTimers.delete(assessmentId.toString());
-            console.log(`✅ Auto-save complete for assessment ${assessmentId}`);
-        } catch (error) {
-            console.error(`❌ Auto-save failed for assessment ${assessmentId}:`, error.message);
-        }
-    }, durationMs);
-
-    activeTimers.set(assessmentId.toString(), timerId);
-    console.log(`⏳ Timer started for assessment ${assessmentId}: ${durationMinutes} minutes`);
+    console.log(
+        `ℹ️ Assessment timer is disabled (manual-stop mode): ${assessmentId}, duration ${durationMinutes} minutes`
+    );
 };
 
 /**
- * Get remaining time for an active assessment
+ * Legacy helper kept for compatibility.
  */
-const getRemainingTime = (assessmentId) => {
-    return activeTimers.has(assessmentId.toString());
-};
+const getRemainingTime = () => false;
 
 /**
- * Cancel a timer for an assessment
+ * Legacy helper kept for compatibility.
  */
 const cancelAssessmentTimer = (assessmentId) => {
-    if (activeTimers.has(assessmentId.toString())) {
-        clearTimeout(activeTimers.get(assessmentId.toString()));
-        activeTimers.delete(assessmentId.toString());
-        console.log(`🛑 Timer cancelled for assessment ${assessmentId}`);
-    }
+    console.log(`ℹ️ No assessment timer to cancel (manual-stop mode): ${assessmentId}`);
 };
 
 module.exports = { startAssessmentTimer, getRemainingTime, cancelAssessmentTimer };

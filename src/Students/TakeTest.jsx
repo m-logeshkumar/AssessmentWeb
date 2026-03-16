@@ -16,6 +16,7 @@ const TakeTest = () => {
     const [submitting, setSubmitting] = useState(false);
     const timerRef = useRef(null);
     const autoSaveRef = useRef(null);
+    const hasExpiredRef = useRef(false);
 
     useEffect(() => {
         const fetchAssessment = async () => {
@@ -72,9 +73,12 @@ const TakeTest = () => {
                 const remaining = data.timeRemaining || 0;
                 setTimeLeft(remaining);
 
-                if (data.isExpired && !submitting) {
+                if (data.isExpired && !hasExpiredRef.current) {
+                    hasExpiredRef.current = true;
                     clearInterval(timerRef.current);
-                    handleAutoSubmit();
+                    clearInterval(autoSaveRef.current);
+                    toast.success('Time is up! Answers auto-submitted.');
+                    navigate('/student/scores');
                 }
             } catch (err) {
                 // Assessment might not be started yet or has ended
@@ -86,7 +90,7 @@ const TakeTest = () => {
         timerRef.current = setInterval(fetchTimeRemaining, 1000); // Then every second
 
         return () => clearInterval(timerRef.current);
-    }, [assessment, id, submitting]);
+    }, [assessment, id, navigate]);
 
     // Auto-save every 30 seconds
     useEffect(() => {
@@ -113,11 +117,6 @@ const TakeTest = () => {
         } catch { }
     }, [assessment, answers, id]);
 
-    const handleAutoSubmit = async () => {
-        toast('⏰ Time is up! Auto-submitting your answers...');
-        await handleSubmit(true);
-    };
-
     const handleSubmit = async (auto = false) => {
         setSubmitting(true);
         try {
@@ -132,6 +131,11 @@ const TakeTest = () => {
             toast.success(auto ? 'Answers auto-submitted!' : 'Answers submitted successfully!');
             navigate('/student/scores');
         } catch (err) {
+            if (err.response?.data?.isTimeExpired) {
+                toast.success('Time is up! Answers auto-submitted.');
+                navigate('/student/scores');
+                return;
+            }
             toast.error('Failed to submit');
         } finally {
             setSubmitting(false);

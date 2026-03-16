@@ -1,6 +1,6 @@
 const Assessment = require('../models/Assessment');
 const Submission = require('../models/Submission');
-const { startAssessmentTimer, cancelAssessmentTimer } = require('../middleware/timerMiddleware');
+const { cancelAssessmentTimer } = require('../middleware/timerMiddleware');
 const { evaluateWithGemini, applyGeminiScores } = require('../utils/geminiEvaluator');
 
 // @desc    Create a new assessment
@@ -65,7 +65,7 @@ const getAssessmentById = async (req, res) => {
     }
 };
 
-// @desc    Start an assessment (set active + start timer)
+// @desc    Start an assessment (set active; admin stops manually)
 // @route   PUT /api/assessments/:id/start
 const startAssessment = async (req, res) => {
     try {
@@ -81,9 +81,6 @@ const startAssessment = async (req, res) => {
         assessment.status = 'active';
         assessment.startedAt = new Date();
         await assessment.save();
-
-        // Start server-side timer
-        startAssessmentTimer(assessment._id, assessment.duration);
 
         res.json({ message: 'Assessment started', assessment });
     } catch (error) {
@@ -105,10 +102,10 @@ const stopAssessment = async (req, res) => {
 
         cancelAssessmentTimer(assessment._id);
 
-        // Auto-save all unsubmitted responses
+        // Keep pending attempts as not-submitted; only mark draft presence.
         await Submission.updateMany(
             { assessmentId: assessment._id, submittedAt: null },
-            { $set: { autoSaved: true, submittedAt: new Date() } }
+            { $set: { autoSaved: true } }
         );
 
         res.json({ message: 'Assessment stopped', assessment });
@@ -128,6 +125,12 @@ const publishResults = async (req, res) => {
             return res.status(404).json({ message: 'Assessment not found' });
         }
 
+        if (assessment.status !== 'completed') {
+            return res.status(400).json({
+                message: 'Stop the assessment first. Admin must manually stop before publishing results.',
+            });
+        }
+
         // Update correct answers in the assessment
         for (const ans of answers) {
             const question = assessment.questions.id(ans.questionId);
@@ -135,7 +138,6 @@ const publishResults = async (req, res) => {
                 question.correctAnswer = ans.correctAnswer;
             }
         }
-        assessment.status = 'completed';
         await assessment.save();
 
         // Batch evaluate all submissions for this assessment
@@ -206,6 +208,12 @@ const aiPublishResults = async (req, res) => {
             return res.status(404).json({ message: 'Assessment not found' });
         }
 
+        if (assessment.status !== 'completed') {
+            return res.status(400).json({
+                message: 'Stop the assessment first. Admin must manually stop before AI evaluation.',
+            });
+        }
+
         if (!assessment.questions || assessment.questions.length === 0) {
             return res.status(400).json({ message: 'Assessment has no questions' });
         }
@@ -268,7 +276,6 @@ const aiPublishResults = async (req, res) => {
                 }
             }
         }
-        assessment.status = 'completed';
         await assessment.save();
 
         // Save scores and per-question results to submissions

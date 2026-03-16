@@ -145,9 +145,37 @@ const submitAnswers = async (req, res) => {
         // Validate time
         const timeCheck = await validateTimeBeforeSubmit(req.user._id, assessmentId);
         if (timeCheck.isExpired) {
-            return res.status(400).json({
-                message: 'Time is up! You cannot submit answers.',
+            const existingSubmission = await Submission.findOne({
+                studentId: req.user._id,
+                assessmentId,
+            });
+
+            if (existingSubmission && existingSubmission.submittedAt) {
+                return res.json({
+                    message: 'Time is up. Your answers were already auto-submitted.',
+                    isTimeExpired: true,
+                    submission: existingSubmission,
+                });
+            }
+
+            const autoSubmitted = await Submission.findOneAndUpdate(
+                { studentId: req.user._id, assessmentId },
+                {
+                    $set: {
+                        answers,
+                        submittedAt: new Date(),
+                        autoSaved: false,
+                        isTimeExpired: true,
+                        totalQuestions: assessment.questions.length,
+                    },
+                },
+                { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+
+            return res.json({
+                message: 'Time is up! Answers auto-submitted.',
                 isTimeExpired: true,
+                submission: autoSubmitted,
             });
         }
 

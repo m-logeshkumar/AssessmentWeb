@@ -13,8 +13,21 @@ import {
 } from 'react-icons/hi';
 import { useNavigate } from 'react-router-dom';
 
+const normalizeId = (value) => {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'object' && value._id) return value._id.toString();
+    return value.toString();
+};
+
+const formatDateTime = (value) => {
+    if (!value) return 'Not started';
+    return new Date(value).toLocaleString();
+};
+
 const ManageAssessments = () => {
     const [assessments, setAssessments] = useState([]);
+    const [students, setStudents] = useState([]);
     const [showCreate, setShowCreate] = useState(false);
     const [title, setTitle] = useState('');
     const [duration, setDuration] = useState(30);
@@ -39,14 +52,24 @@ const ManageAssessments = () => {
         }
     };
 
+    const fetchStudents = async () => {
+        try {
+            const { data } = await axios.get('/auth/students');
+            setStudents(data);
+        } catch (err) {
+            console.log('Could not fetch students');
+        }
+    };
+
     useEffect(() => {
         fetchAssessments();
         fetchAllSubmissions();
+        fetchStudents();
     }, []);
 
     const fetchAllSubmissions = async () => {
         try {
-            // Fetch submissions for all active assessments
+            // Fetch submissions for all active/completed assessments
             const assessmentResponse = await axios.get('/assessments');
             const activeAssessments = assessmentResponse.data.filter(a => a.status === 'active' || a.status === 'completed');
             
@@ -90,6 +113,7 @@ const ManageAssessments = () => {
             setQuestions([{ questionText: '' }]);
             setShowCreate(false);
             fetchAssessments();
+            fetchAllSubmissions();
         } catch (err) {
             toast.error(err.response?.data?.message || 'Failed to create assessment');
         } finally {
@@ -100,8 +124,9 @@ const ManageAssessments = () => {
     const handleStart = async (id) => {
         try {
             await axios.put(`/assessments/${id}/start`);
-            toast.success('Assessment started! Timer is running.');
+            toast.success('Assessment started. Students now have individual timers.');
             fetchAssessments();
+            fetchAllSubmissions();
         } catch (err) {
             toast.error(err.response?.data?.message || 'Failed to start');
         }
@@ -110,8 +135,9 @@ const ManageAssessments = () => {
     const handleStop = async (id) => {
         try {
             await axios.put(`/assessments/${id}/stop`);
-            toast.success('Assessment stopped. Answers auto-saved.');
+            toast.success('Assessment stopped manually.');
             fetchAssessments();
+            fetchAllSubmissions();
         } catch (err) {
             toast.error(err.response?.data?.message || 'Failed to stop');
         }
@@ -124,11 +150,12 @@ const ManageAssessments = () => {
 
     const handleViewSubmissions = async (assessment) => {
         setSelectedAssessmentForSubmissions(assessment);
+        setSubmissions([]);
+        setShowSubmissionsModal(true);
         setLoadingSubmissions(true);
         try {
             const { data } = await axios.get(`/submissions/assessment/${assessment._id}`);
             setSubmissions(data);
-            setShowSubmissionsModal(true);
         } catch (err) {
             toast.error('Failed to load submissions');
         } finally {
@@ -146,12 +173,53 @@ const ManageAssessments = () => {
             setShowDeleteModal(false);
             setAssessmentToDelete(null);
             fetchAssessments();
+            fetchAllSubmissions();
         } catch (err) {
             toast.error('Failed to delete');
         } finally {
             setDeleting(false);
         }
     };
+
+    const getAssessmentSubmissions = (assessmentId) => {
+        return allSubmissions.filter(
+            (submission) => normalizeId(submission.assessmentId) === assessmentId
+        );
+    };
+
+    const getSubmissionStats = (assessmentId) => {
+        const assessmentSubmissions = getAssessmentSubmissions(assessmentId);
+        const submittedCount = assessmentSubmissions.filter((submission) => Boolean(submission.submittedAt)).length;
+
+        return {
+            submittedCount,
+            totalMembers: students.length > 0 ? students.length : assessmentSubmissions.length,
+        };
+    };
+
+    const modalMembers = selectedAssessmentForSubmissions
+        ? (students.length > 0
+            ? students.map((student) => {
+                const relatedSubmission = submissions.find(
+                    (submission) => normalizeId(submission.studentId?._id || submission.studentId) === student._id
+                );
+
+                return {
+                    _id: student._id,
+                    name: student.name,
+                    email: student.email,
+                    studentStartedAt: relatedSubmission?.studentStartedAt || null,
+                    submittedAt: relatedSubmission?.submittedAt || null,
+                };
+            })
+            : submissions.map((submission, idx) => ({
+                _id: normalizeId(submission.studentId?._id || submission.studentId) || `${idx}`,
+                name: submission.studentId?.name || `Student ${idx + 1}`,
+                email: submission.studentId?.email || '',
+                studentStartedAt: submission.studentStartedAt || null,
+                submittedAt: submission.submittedAt || null,
+            })))
+        : [];
 
     return (
         <div className="app-layout">
@@ -224,60 +292,61 @@ const ManageAssessments = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {assessments.map((a) => (
-                                        <tr key={a._id}>
-                                            <td style={{ fontWeight: 600 }}>{a.title}</td>
-                                            <td>{a.questions?.length || 0}</td>
-                                            <td>{a.duration} min</td>
-                                            <td>
-                                                <span className={`badge badge-${a.status}`}>{a.status}</span>
-                                            </td>
-                                            <td>
-                                                <div className="flex gap-8">
-                                                    {a.status === 'draft' && (
-                                                        <button
-                                                            className="btn btn-success btn-sm"
-                                                            onClick={() => handleStart(a._id)}
-                                                        >
-                                                            <HiOutlinePlay /> Start
-                                                        </button>
-                                                    )}
-                                                    {a.status === 'active' && (
-                                                        <div className="flex gap-8 align-center">
+                                    {assessments.map((a) => {
+                                        const submissionStats = getSubmissionStats(a._id);
+
+                                        return (
+                                            <tr key={a._id}>
+                                                <td style={{ fontWeight: 600 }}>{a.title}</td>
+                                                <td>{a.questions?.length || 0}</td>
+                                                <td>{a.duration} min</td>
+                                                <td>
+                                                    <span className={`badge badge-${a.status}`}>{a.status}</span>
+                                                </td>
+                                                <td>
+                                                    <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+                                                        {a.status === 'draft' && (
+                                                            <button
+                                                                className="btn btn-success btn-sm"
+                                                                onClick={() => handleStart(a._id)}
+                                                            >
+                                                                <HiOutlinePlay /> Start
+                                                            </button>
+                                                        )}
+                                                        {a.status === 'active' && (
                                                             <button
                                                                 className="btn btn-danger btn-sm"
                                                                 onClick={() => handleStop(a._id)}
                                                             >
                                                                 <HiOutlineStop /> Stop
                                                             </button>
+                                                        )}
+                                                        {a.status === 'completed' && (
                                                             <button
-                                                                className="btn btn-info btn-sm"
-                                                                onClick={() => handleViewSubmissions(a)}
-                                                                style={{ cursor: 'pointer' }}
+                                                                className="btn btn-primary btn-sm"
+                                                                onClick={() => navigate(`/admin/assessments/${a._id}/evaluate`)}
                                                             >
-                                                                {allSubmissions.filter(s => s.assessmentId === a._id && s.submittedAt).length}/{allSubmissions.filter(s => s.assessmentId === a._id).length || 0}
+                                                                <HiOutlineClipboardCheck /> Evaluate
                                                             </button>
-                                                        </div>
-                                                    )}
-                                                    {a.status === 'completed' && (
+                                                        )}
                                                         <button
-                                                            className="btn btn-primary btn-sm"
-                                                            onClick={() => navigate(`/admin/assessments/${a._id}/evaluate`)}
+                                                            className="btn btn-secondary btn-sm"
+                                                            onClick={() => handleViewSubmissions(a)}
                                                         >
-                                                            <HiOutlineClipboardCheck /> Evaluate
+                                                            {submissionStats.submittedCount}/{submissionStats.totalMembers}
                                                         </button>
-                                                    )}
-                                                    <button
-                                                        className="btn btn-danger btn-sm"
-                                                        onClick={() => confirmDelete(a)}
-                                                        title="Delete assessment and all submissions"
-                                                    >
-                                                        <HiOutlineTrash />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                        <button
+                                                            className="btn btn-danger btn-sm"
+                                                            onClick={() => confirmDelete(a)}
+                                                            title="Delete assessment and all submissions"
+                                                        >
+                                                            <HiOutlineTrash />
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>
@@ -350,40 +419,47 @@ const ManageAssessments = () => {
                                         disabled={loadingSubmissions}
                                     >×</button>
                                 </div>
+
                                 <div style={{ marginBottom: 24 }}>
                                     {loadingSubmissions ? (
                                         <div style={{ textAlign: 'center', padding: '20px' }}>Loading submissions...</div>
-                                    ) : submissions.length === 0 ? (
+                                    ) : modalMembers.length === 0 ? (
                                         <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
                                             No submissions yet
                                         </div>
                                     ) : (
                                         <div style={{ display: 'grid', gap: '12px' }}>
-                                            {submissions
-                                                .filter(s => s.assessmentId === selectedAssessmentForSubmissions._id)
-                                                .map((submission, idx) => (
+                                            {modalMembers.map((member, idx) => (
                                                 <div 
-                                                    key={submission._id} 
+                                                    key={member._id} 
                                                     style={{
                                                         display: 'flex',
                                                         alignItems: 'center',
                                                         justifyContent: 'space-between',
                                                         padding: '12px 16px',
-                                                        backgroundColor: submission.submittedAt ? 'var(--success-bg)' : 'var(--warning-bg)',
+                                                        backgroundColor: member.submittedAt ? 'var(--success-bg)' : 'var(--warning-bg)',
                                                         borderRadius: '6px',
-                                                        borderLeft: `4px solid ${submission.submittedAt ? 'var(--success)' : 'var(--warning)'}`
+                                                        borderLeft: `4px solid ${member.submittedAt ? 'var(--success)' : 'var(--warning)'}`
                                                     }}
                                                 >
                                                     <div>
                                                         <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
-                                                            {submission.studentId?.name || `Student ${idx + 1}`}
+                                                            {member.name || `Student ${idx + 1}`}
                                                         </div>
                                                         <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                                                            {submission.submittedAt 
-                                                                ? `Submitted at ${new Date(submission.submittedAt).toLocaleString()}`
-                                                                : 'Not submitted'
-                                                            }
+                                                            Start: {formatDateTime(member.studentStartedAt)}
                                                         </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                                            Status: {member.submittedAt ? 'Submitted' : 'Not submitted'}
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                                                            Submitted Time: {member.submittedAt ? new Date(member.submittedAt).toLocaleString() : 'Not submitted'}
+                                                        </div>
+                                                        {member.email && (
+                                                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                                                {member.email}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     <div style={{
                                                         display: 'flex',
@@ -392,11 +468,11 @@ const ManageAssessments = () => {
                                                         width: '32px',
                                                         height: '32px',
                                                         borderRadius: '50%',
-                                                        backgroundColor: submission.submittedAt ? 'var(--success)' : 'var(--danger)',
+                                                        backgroundColor: member.submittedAt ? 'var(--success)' : 'var(--danger)',
                                                         color: 'white',
                                                         fontWeight: 'bold'
                                                     }}>
-                                                        {submission.submittedAt ? '✓' : '✗'}
+                                                        {member.submittedAt ? '✓' : '✗'}
                                                     </div>
                                                 </div>
                                             ))}
